@@ -85,10 +85,12 @@ public class Simulation : MonoBehaviour
     public float packetLoss = 0.05f;
     public uint snapshotRate = 0;
 
+    private const int BUFFER_SIZE = 1024;
+
+    private float deltaTime;
     private float currentTime;
     private int currentTick;
     private int latestTick;
-    private const int BUFFER_SIZE = 1024;
     private UserInput[] inputBuffer; //predicted inputs
     private ClientState[] stateBuffer; //predicted states
     private Queue<StateMessage> stateMessages;
@@ -104,6 +106,7 @@ public class Simulation : MonoBehaviour
 
     void Start()
     {
+        deltaTime = Time.fixedDeltaTime;
         currentTime = 0.0f;
         currentTick = 0;
         latestTick = 0;
@@ -141,8 +144,6 @@ public class Simulation : MonoBehaviour
 
     void Update()
     {
-        float deltaTime = Time.fixedDeltaTime;
-
         currentTime += Time.deltaTime;
         while (currentTime >= deltaTime)
         {
@@ -173,8 +174,8 @@ public class Simulation : MonoBehaviour
             currentTick++;
         }
 
-        UpdateClient(deltaTime);
-        UpdateServer(deltaTime);
+        UpdateClient();
+        UpdateServer();
     }
 
     private void ApplyForce(Rigidbody rigidbody, UserInput input)
@@ -250,7 +251,7 @@ public class Simulation : MonoBehaviour
             Time.time >= inputMessages.Peek().deliveryTime;
     }
 
-    private void UpdateServer(float deltaTime)
+    private void UpdateServer()
     {
         while (HasInputMessage())
         {
@@ -303,7 +304,7 @@ public class Simulation : MonoBehaviour
             Time.time >= stateMessages.Peek().deliveryTime;
     }
 
-    private void UpdateClient(float deltaTime)
+    private void UpdateClient()
     {
         if (HasStateMessage())
         {
@@ -320,14 +321,14 @@ public class Simulation : MonoBehaviour
                 int index = message.tick % BUFFER_SIZE;
                 Vector3 positionError =
                     message.position - stateBuffer[index].position;
-                float rotationError =
-                    1.0f - Quaternion.Dot(
-                        message.rotation, stateBuffer[index].rotation);
+                float rotationError = 1.0f - Quaternion.Dot(
+                    message.rotation,
+                    stateBuffer[index].rotation);
 
                 if (positionError.sqrMagnitude > 0.0000001f ||
                     rotationError > 0.00001f)
                 {
-                    Debug.Log($"Correcting for error at tick {message.tick} " +
+                    Debug.Log($"Correct error at tick {message.tick} " +
                         $"(rewinding {currentTick - message.tick} ticks)");
 
                     Vector3 previousPosition =
@@ -389,7 +390,7 @@ public class Simulation : MonoBehaviour
             this.rotationError = Quaternion.identity;
         }
 
-        clientBody.position = clientBody.position + this.positionError;
-        clientBody.rotation = clientBody.rotation * this.rotationError;
+        clientBody.position += this.positionError;
+        clientBody.rotation *= this.rotationError;
     }
 }
