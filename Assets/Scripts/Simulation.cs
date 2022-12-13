@@ -73,7 +73,7 @@ struct StateMessage
 
 public class Simulation : MonoBehaviour
 {
-    public const float MOVE_FLOAT = 0.5f;
+    public const float MOVE_FORCE = 0.5f;
     public const float JUMP_THRESHOLD = 0.75f;
 
     public GameObject clientPlayer;
@@ -85,7 +85,6 @@ public class Simulation : MonoBehaviour
     public float packetLoss = 0.05f;
     public uint snapshotRate = 0;
 
-    private PhysicsScene clientScene;
     private float currentTime;
     private int currentTick;
     private int latestTick;
@@ -95,10 +94,13 @@ public class Simulation : MonoBehaviour
     private Queue<StateMessage> stateMessages;
     private Vector3 positionError;
     private Quaternion rotationError;
+    private Rigidbody clientBody;
+    private PhysicsScene clientScene;
 
-    private PhysicsScene serverScene;
     private int serverTick;
     private Queue<InputMessage> inputMessages;
+    private Rigidbody serverBody;
+    private PhysicsScene serverScene;
 
     void Start()
     {
@@ -110,28 +112,31 @@ public class Simulation : MonoBehaviour
         stateMessages = new Queue<StateMessage>();
         positionError = Vector3.zero;
         rotationError = Quaternion.identity;
+        clientBody = clientPlayer.GetComponent<Rigidbody>();
 
+        Scene scene1 = SceneManager.LoadScene("Background",
+            new LoadSceneParameters()
+            {
+                loadSceneMode = LoadSceneMode.Additive,
+                localPhysicsMode = LocalPhysicsMode.Physics3D
+            });
+
+        SceneManager.MoveGameObjectToScene(clientPlayer, scene1);
+        clientScene = scene1.GetPhysicsScene();
+
+        serverTick = 0;
         inputMessages = new Queue<InputMessage>();
+        serverBody = serverPlayer.GetComponent<Rigidbody>();
 
-        Scene clientScene = SceneManager.LoadScene("Background",
+        Scene scene2 = SceneManager.LoadScene("Background",
             new LoadSceneParameters()
             {
                 loadSceneMode = LoadSceneMode.Additive,
                 localPhysicsMode = LocalPhysicsMode.Physics3D
             });
 
-        SceneManager.MoveGameObjectToScene(clientPlayer, clientScene);
-        this.clientScene = clientScene.GetPhysicsScene();
-
-        Scene serverScene = SceneManager.LoadScene("Background",
-            new LoadSceneParameters()
-            {
-                loadSceneMode = LoadSceneMode.Additive,
-                localPhysicsMode = LocalPhysicsMode.Physics3D
-            });
-
-        SceneManager.MoveGameObjectToScene(serverPlayer, serverScene);
-        this.serverScene = serverScene.GetPhysicsScene();
+        SceneManager.MoveGameObjectToScene(serverPlayer, scene2);
+        serverScene = scene2.GetPhysicsScene();
     }
 
     void Update()
@@ -156,12 +161,12 @@ public class Simulation : MonoBehaviour
             inputBuffer[index] = input;
             stateBuffer[index] = new()
             {
-                position = clientPlayer.transform.position,
-                rotation = clientPlayer.transform.rotation
+                position = clientBody.position,
+                rotation = clientBody.rotation
             };
 
-            ApplyForce(clientPlayer, input);
-             clientScene.Simulate(deltaTime);
+            ApplyForce(clientBody, input);
+            clientScene.Simulate(deltaTime);
 
             SendInput();
 
@@ -172,42 +177,40 @@ public class Simulation : MonoBehaviour
         UpdateServer(deltaTime);
     }
 
-    private void ApplyForce(GameObject player, UserInput input)
+    private void ApplyForce(Rigidbody rigidbody, UserInput input)
     {
-        Rigidbody rigidbody = player.GetComponent<Rigidbody>();
-
         if (input.up)
         {
             rigidbody.AddForce(
-                Camera.main.transform.forward * MOVE_FLOAT,
+                Camera.main.transform.forward * MOVE_FORCE,
                 ForceMode.Impulse);
         }
 
         if (input.down)
         {
             rigidbody.AddForce(
-                -Camera.main.transform.forward * MOVE_FLOAT,
+                -Camera.main.transform.forward * MOVE_FORCE,
                 ForceMode.Impulse);
         }
 
         if (input.right)
         {
             rigidbody.AddForce(
-                Camera.main.transform.right * MOVE_FLOAT,
+                Camera.main.transform.right * MOVE_FORCE,
                 ForceMode.Impulse);
         }
 
         if (input.left)
         {
             rigidbody.AddForce(
-                -Camera.main.transform.right * MOVE_FLOAT,
+                -Camera.main.transform.right * MOVE_FORCE,
                 ForceMode.Impulse);
         }
 
-        if (input.jump && player.transform.position.y <= JUMP_THRESHOLD)
+        if (input.jump && rigidbody.position.y <= JUMP_THRESHOLD)
         {
             rigidbody.AddForce(
-                Camera.main.transform.up * MOVE_FLOAT,
+                Camera.main.transform.up * MOVE_FORCE,
                 ForceMode.Impulse);
         }
     }
@@ -249,8 +252,6 @@ public class Simulation : MonoBehaviour
 
     private void UpdateServer(float deltaTime)
     {
-        Rigidbody rigidbody = serverPlayer.GetComponent<Rigidbody>();
-
         while (HasInputMessage())
         {
             InputMessage inputMessage = inputMessages.Dequeue();
@@ -267,7 +268,7 @@ public class Simulation : MonoBehaviour
 
                 for (int i = offsetTick; i < inputCount; i++)
                 {
-                    ApplyForce(serverPlayer, inputMessage.inputs[i]);
+                    ApplyForce(serverBody, inputMessage.inputs[i]);
                     serverScene.Simulate(deltaTime);
 
                     serverTick++;
@@ -282,10 +283,10 @@ public class Simulation : MonoBehaviour
                         {
                             deliveryTime = Time.time + networkLatency,
                             tick = serverTick,
-                            position = rigidbody.position,
-                            rotation = rigidbody.rotation,
-                            velocity = rigidbody.velocity,
-                            angularVelocity = rigidbody.angularVelocity
+                            position = serverBody.position,
+                            rotation = serverBody.rotation,
+                            velocity = serverBody.velocity,
+                            angularVelocity = serverBody.angularVelocity
                         };
 
                         Debug.Log($"stateMessage={stateMessage}");
@@ -304,8 +305,6 @@ public class Simulation : MonoBehaviour
 
     private void UpdateClient(float deltaTime)
     {
-        Rigidbody rigidbody = clientPlayer.GetComponent<Rigidbody>();
-
         if (HasStateMessage())
         {
             StateMessage message = stateMessages.Dequeue();
@@ -332,14 +331,14 @@ public class Simulation : MonoBehaviour
                         $"(rewinding {currentTick - message.tick} ticks)");
 
                     Vector3 previousPosition =
-                        rigidbody.position + this.positionError;
+                        clientBody.position + this.positionError;
                     Quaternion previousRotation =
-                        rigidbody.rotation * this.rotationError;
+                        clientBody.rotation * this.rotationError;
 
-                    rigidbody.position = message.position;
-                    rigidbody.rotation = message.rotation;
-                    rigidbody.velocity = message.velocity;
-                    rigidbody.angularVelocity = message.angularVelocity;
+                    clientBody.position = message.position;
+                    clientBody.rotation = message.rotation;
+                    clientBody.velocity = message.velocity;
+                    clientBody.angularVelocity = message.angularVelocity;
 
                     int rewindTick = message.tick;
                     while (rewindTick < currentTick)
@@ -348,18 +347,18 @@ public class Simulation : MonoBehaviour
 
                         stateBuffer[index] = new()
                         {
-                            position = rigidbody.position,
-                            rotation = rigidbody.rotation
+                            position = clientBody.position,
+                            rotation = clientBody.rotation
                         };
 
-                        ApplyForce(clientPlayer, inputBuffer[index]);
+                        ApplyForce(clientBody, inputBuffer[index]);
                         clientScene.Simulate(deltaTime);
 
                         rewindTick++;
                     }
 
                     Vector3 positionDelta =
-                        previousPosition - rigidbody.position;
+                        previousPosition - clientBody.position;
                     if (positionDelta.sqrMagnitude >= 4.0f)
                     {
                         this.positionError = Vector3.zero;
@@ -369,7 +368,7 @@ public class Simulation : MonoBehaviour
                     {
                         this.positionError = positionDelta;
                         this.rotationError =
-                            Quaternion.Inverse(rigidbody.rotation) *
+                            Quaternion.Inverse(clientBody.rotation) *
                             previousRotation;
                     }
                 }
@@ -390,9 +389,7 @@ public class Simulation : MonoBehaviour
             this.rotationError = Quaternion.identity;
         }
 
-        clientPlayer.transform.position =
-            rigidbody.position + this.positionError;
-        clientPlayer.transform.rotation =
-            rigidbody.rotation * this.rotationError;
+        clientBody.position = clientBody.position + this.positionError;
+        clientBody.rotation = clientBody.rotation * this.rotationError;
     }
 }
