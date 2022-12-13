@@ -1,4 +1,4 @@
-# Client-side prediction (CSP)
+# Client-side prediction and server reconciliation
 (Forked from Joe Best-Rotheray's project, https://github.com/spectre1989/unity_physics_csp)
 
-This is the base project for the CSP assignment. In this exercise, you'll explore CSP, including error correction and smoothing.
+This is the base project for assignment 1. In this exercise, we'll explore this client-side prediction and server reconciliation, including error correction and smoothing.
